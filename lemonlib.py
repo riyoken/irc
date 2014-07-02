@@ -1,6 +1,7 @@
 import socket
 import urllib.request
 import time
+import select
 
 
 '''
@@ -18,6 +19,10 @@ GNU General Public License for more details.
 
 Version [Pre Alpha]
 '''
+'''
+to do:
+    create regex patterns to handle all of the events
+'''
 
 class Chat:
 
@@ -28,32 +33,50 @@ class Chat:
     def connect(self):
         self.cumsock = socket.socket()
         self.cumsock.connect((self.server, self.port))
-        self.cumsock.send(('NICK %s\r\n' % self.nick).encode())
-        self.cumsock.send(('USER %s %s bla :%s\r\n' % (self.nick, self.server, self.realname)).encode())
-        self.cumsock.send(('JOIN %s\r\n' % self.chat.lower()).encode())
+        self.wbyte += ('NICK %s\r\n' % self.nick).encode()
+        self.wbyte += ('USER %s %s bla :%s\r\n' % (self.nick, self.server, self.realname)).encode()        
+
+    def auth(self):
+        self.wbyte += ('JOIN %s\r\n' % self.chat.lower()).encode()
         
 class Main:
     def __init__(self):
         self.interpret = Interpret(self)
-        self.net = None
+        self.connections = dict()
        
-    def start(self, chat, nick, server):
-        self.join('#'+chat.lower(), nick, server)
+    def start(self, chats, nick):
+        [self.join(x, nick) for x in chats]
         self.matrix()
+
+    def getConnections(self):
+        return [x for x in self.connections.values() if x.cumsock.fileno() != -1 and x.cumsock != None]
         
     def matrix(self):
-        while True:
+        self.lemon = True
+        while self.lemon:
             self.rdata = b''
-            while not self.rdata.endswith(b'\r\n'):
-                self.rdata += self.net.cumsock.recv(1024)
-            self.interpret.parse_data(self.rdata)
-            self.rdata = b''
+            connections = self.getConnections()
+            rsocks = [x.cumsock for x in connections]
+            wsocks = [x.cumsock for x in connections if x.wbyte != b'']
+            rsock, wsock, e = select.select(rsocks, wsocks, [], 0.1)
+            for i in rsock:
+                net = [x for x in connections if x.cumsock == i][0]
+                while not self.rdata.endswith(b'\r\n'): self.rdata += i.recv(1024)
+                self.interpret.parse_data(self.rdata, net)
+                self.rdata = b''
+            for i in wsock:
+                net = [x for x in connections if x.cumsock == i][0]
+                i.send(net.wbyte)
+                net.wbyte = b''
 
-    def join(self, chat, nick, server):
-        self.net = Chat(**{
+    def join(self, x, nick):
+        chat = '#'+(x[0].lower().lstrip('#'))
+        server = x[1]
+        self.connections[chat] = Chat(**{
             'server': server,
             'port': 6667,
             'nick': nick,
+            'wbyte': b'',
             'realname': 'nomnomnom',
             'chat': chat
         })
@@ -62,14 +85,24 @@ class Interpret:
 
     def __init__(self, main):
         self.main = main
-        self.spam = False
-        
-    def parse_data(self, data):
-        data = data.decode().split('\r\n')
-        [self.handle_data(x.split(':')) for x in data]
 
-    def handle_data(self, data):
-        print(data)        
-        if data[0] == 'PING ':
-            ping = 'PONG :%s\r\n' % data[1]
-            self.main.net.cumsock.send(ping.encode())
+    def clean(self, data):
+        return [x.rstrip() for x in data]
+        
+    def parse_data(self, data, net):
+        data = data.decode().split('\r\n')
+        [self.handle_data(self.clean(x.split(':')), net) for x in data]
+
+    def handle_data(self, data, net):
+        print(data)
+        if len(data) > 1:
+            if data[0] == 'PING':
+                ping = 'PONG :%s\r\n' % data[1]
+                net.wbyte += ping.encode()
+                
+            elif 'MODE' in data[1].split(' '):
+                if data[1].split(' ')[2] == net.nick:
+                    net.auth()
+
+if __name__ == '__main__':
+    Main().start([('chat','irc.obsidianirc.net')], 'riyoirc')
