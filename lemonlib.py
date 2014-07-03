@@ -103,14 +103,13 @@ class Interpret:
     def parse_data(self, data, net):
         self.net = net
         data = data.decode().split('\r\n')
-        [self.handle_data(x.rstrip()) for x in data]
+        [self.handle_data(x.rstrip()) for x in data if x != '']
 
     def handle_data(self, data):
-        if data != '':
-            print(data)
-            for pattern, func in self._parser['chats']:
-                if pattern.match(data):
-                    func(pattern.match(data))                
+        print(data)
+        for pattern, func in self._parser['chats']:
+            if pattern.match(data):
+                func(pattern.match(data))                
 
     def _host(self, data):
         self.net.chatInfo['host'] = data.group(1).lstrip(':')
