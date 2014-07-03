@@ -1,5 +1,5 @@
 import socket
-import urllib.request
+import re
 import time
 import select
 
@@ -23,6 +23,7 @@ Version [Pre Alpha]
 to do:
     create regex patterns to handle all of the events
 '''
+_mode = ''
 
 class Chat:
 
@@ -51,6 +52,19 @@ class Main:
     def getConnections(self):
         return [x for x in self.connections.values() if x.cumsock.fileno() != -1 and x.cumsock != None]
         
+    def join(self, x, nick):
+        chat = '#'+(x[0].lower().lstrip('#'))
+        server = x[1]
+        self.connections[chat] = Chat(**{
+            'server': server,
+            'port': 6667,
+            'nick': nick,
+            'wbyte': b'',
+            'realname': 'nomnomnom',
+            'chat': chat,
+            'chatInfo': dict()
+        })
+        
     def matrix(self):
         self.lemon = True
         while self.lemon:
@@ -69,40 +83,45 @@ class Main:
                 i.send(net.wbyte)
                 net.wbyte = b''
 
-    def join(self, x, nick):
-        chat = '#'+(x[0].lower().lstrip('#'))
-        server = x[1]
-        self.connections[chat] = Chat(**{
-            'server': server,
-            'port': 6667,
-            'nick': nick,
-            'wbyte': b'',
-            'realname': 'nomnomnom',
-            'chat': chat
-        })
-
 class Interpret:
 
     def __init__(self, main):
         self.main = main
+        self.__host = re.compile(':?(^(?!.*\!).*)(?= NOTICE)')
+        self.__ping = re.compile('PING :([\s\S]*$)')
+        self.__mode = re.compile(':.*? MODE (.*?) :')
+        self._parser =  {
+          'chats':[
+              [self.__ping, self._ping],
+              [self.__host, self._host],
+              [self.__mode, self._mode]
+          ],
+          'privC':[
+          ]    
+        }
 
-    def clean(self, data):
-        return [x.rstrip() for x in data]
-        
     def parse_data(self, data, net):
+        self.net = net
         data = data.decode().split('\r\n')
-        [self.handle_data(self.clean(x.split(':')), net) for x in data]
+        [self.handle_data(x.rstrip()) for x in data]
 
-    def handle_data(self, data, net):
-        print(data)
-        if len(data) > 1:
-            if data[0] == 'PING':
-                ping = 'PONG :%s\r\n' % data[1]
-                net.wbyte += ping.encode()
-                
-            elif 'MODE' in data[1].split(' '):
-                if data[1].split(' ')[2] == net.nick:
-                    net.auth()
+    def handle_data(self, data):
+        if data != '':
+            print(data)
+            for pattern, func in self._parser['chats']:
+                if pattern.match(data):
+                    func(pattern.match(data))                
+
+    def _host(self, data):
+        self.net.chatInfo['host'] = data.group(1).lstrip(':')
+
+    def _ping(self, data):
+        ping = 'PONG :%s\r\n' % data.group(1)
+        self.net.wbyte += ping.encode()
+
+    def _mode(self, data):
+        if data.group(1) == self.net.nick:
+            self.net.auth()
 
 if __name__ == '__main__':
-    Main().start([('chat','irc.obsidianirc.net')], 'riyoirc')
+    Main().start([('chat','irc.obsidianirc.net'),('anilist', 'irc.rizon.net')], 'riyoirc')
